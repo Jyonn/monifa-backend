@@ -1,6 +1,7 @@
 import base64
 
 from django.test import TestCase
+from django.core.cache import cache
 
 from core.auth import issue_access
 from core.models import MfaEntry, User
@@ -8,6 +9,7 @@ from core.models import MfaEntry, User
 
 class MfaEntryApiTests(TestCase):
     def setUp(self):
+        cache.clear()
         self.user = User.objects.create(display_name="Test")
         self.other = User.objects.create(display_name="Other")
         self.headers = {"HTTP_AUTHORIZATION": f"Bearer {issue_access(self.user)}"}
@@ -47,3 +49,11 @@ class MfaEntryApiTests(TestCase):
         accepted = self.client.delete("/api/me/account", {"confirmation": "DELETE"}, content_type="application/json", **self.headers)
         self.assertEqual(accepted.status_code, 204)
         self.assertFalse(User.objects.filter(pk=self.user.pk).exists())
+
+    def test_ticket_exchange_is_rate_limited(self):
+        for _ in range(20):
+            response = self.client.post("/api/auth/ticket", {"ticket": "invalid"}, content_type="application/json", REMOTE_ADDR="192.0.2.4")
+            self.assertEqual(response.status_code, 401)
+        limited = self.client.post("/api/auth/ticket", {"ticket": "invalid"}, content_type="application/json", REMOTE_ADDR="192.0.2.4")
+        self.assertEqual(limited.status_code, 429)
+        self.assertEqual(limited["Retry-After"], "60")

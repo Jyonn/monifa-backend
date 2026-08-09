@@ -12,7 +12,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from .auth import decode_token, issue_access, issue_refresh, require_access
+from .auth import decode_token, issue_access, issue_refresh, rate_limit, require_access
 from .models import AuditEvent, ExpiringCode, MfaEntry, RefreshSession, User, UserIdentity
 from .providers import PROVIDERS
 
@@ -122,6 +122,7 @@ def oauth_callback(request, provider):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@rate_limit("ticket", 20)
 def exchange_ticket(request):
     data = body(request)
     code = consume_code((data or {}).get("ticket", ""), ExpiringCode.Kind.LOGIN_TICKET)
@@ -132,6 +133,7 @@ def exchange_ticket(request):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@rate_limit("refresh", 30)
 def refresh(request):
     token = (body(request) or {}).get("refreshToken", "")
     try:
@@ -200,8 +202,15 @@ def entry_json(entry):
 @csrf_exempt
 @require_access
 @require_http_methods(["GET", "POST"])
+@rate_limit("mfa_entries", 120)
 def entries(request):
     if request.method == "GET":
+        AuditEvent.objects.create(
+            user=request.monifa_user,
+            action="mfa.read",
+            ip_address=client_ip(request),
+            metadata={"count": request.monifa_user.mfa_entries.count()},
+        )
         response = JsonResponse({"entries": [entry_json(item) for item in request.monifa_user.mfa_entries.all()], "serverTime": int(timezone.now().timestamp())})
         response["Cache-Control"] = "no-store"
         return response
@@ -219,6 +228,7 @@ def entries(request):
 @csrf_exempt
 @require_access
 @require_http_methods(["DELETE"])
+@rate_limit("mfa_delete", 60)
 def entry_detail(request, entry_id):
     entry = request.monifa_user.mfa_entries.filter(pk=entry_id).first()
     if entry is None:

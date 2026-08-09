@@ -4,6 +4,7 @@ from functools import wraps
 
 import jwt
 from django.conf import settings
+from django.core.cache import cache
 from django.http import JsonResponse
 from django.utils import timezone
 
@@ -59,3 +60,29 @@ def require_access(view):
 
     return wrapped
 
+
+def rate_limit(scope, limit, window_seconds=60):
+    def decorator(view):
+        @wraps(view)
+        def wrapped(request, *args, **kwargs):
+            forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[0].strip()
+            identity = request.headers.get("Authorization", "") or forwarded or request.META.get("REMOTE_ADDR", "unknown")
+            digest = hashlib.sha256(identity.encode()).hexdigest()[:24]
+            key = f"monifa:rate:{scope}:{digest}"
+            if cache.add(key, 1, timeout=window_seconds):
+                count = 1
+            else:
+                try:
+                    count = cache.incr(key)
+                except ValueError:
+                    cache.set(key, 1, timeout=window_seconds)
+                    count = 1
+            if count > limit:
+                response = JsonResponse({"error": "rate_limited"}, status=429)
+                response["Retry-After"] = str(window_seconds)
+                return response
+            return view(request, *args, **kwargs)
+
+        return wrapped
+
+    return decorator
