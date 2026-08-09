@@ -73,6 +73,22 @@ def oauth_start(request, provider):
     return redirect(adapter.authorize_url(state, callback))
 
 
+@require_access
+@require_http_methods(["GET"])
+def oauth_link_start(request, provider):
+    adapter = PROVIDERS.get(provider)
+    if adapter is None:
+        return JsonResponse({"error": "unsupported_provider"}, status=404)
+    state = ExpiringCode.issue(
+        ExpiringCode.Kind.OAUTH_STATE,
+        settings.OAUTH_STATE_TTL_SECONDS,
+        provider=provider,
+        link_user=request.monifa_user,
+    )
+    callback = request.build_absolute_uri(f"/api/auth/{provider}/callback")
+    return JsonResponse({"authorizeUrl": adapter.authorize_url(state, callback)})
+
+
 @require_http_methods(["GET"])
 def oauth_callback(request, provider):
     adapter = PROVIDERS.get(provider)
@@ -226,3 +242,14 @@ def unlink_identity(request, provider):
     AuditEvent.objects.create(user=request.monifa_user, action="identity.unlink", ip_address=client_ip(request), metadata={"provider": provider})
     return JsonResponse({}, status=204)
 
+
+@csrf_exempt
+@require_access
+@require_http_methods(["DELETE"])
+def delete_account(request):
+    if (body(request) or {}).get("confirmation") != "DELETE":
+        return JsonResponse({"error": "confirmation_required"}, status=400)
+    user = request.monifa_user
+    AuditEvent.objects.filter(user=user).delete()
+    user.delete()
+    return JsonResponse({}, status=204)

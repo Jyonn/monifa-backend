@@ -41,3 +41,9 @@ class MfaEntryApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+    def test_account_delete_requires_confirmation(self):
+        rejected = self.client.delete("/api/me/account", {"confirmation": "NO"}, content_type="application/json", **self.headers)
+        self.assertEqual(rejected.status_code, 400)
+        accepted = self.client.delete("/api/me/account", {"confirmation": "DELETE"}, content_type="application/json", **self.headers)
+        self.assertEqual(accepted.status_code, 204)
+        self.assertFalse(User.objects.filter(pk=self.user.pk).exists())

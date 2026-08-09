@@ -27,12 +27,13 @@ The current product decision stores TOTP secrets in plaintext so the web client 
 ## API
 
 - `GET /api/auth/{qitian|github}/start`
+- `GET /api/auth/{qitian|github}/link`
 - `GET /api/auth/{provider}/callback`
 - `POST /api/auth/ticket`
 - `POST /api/auth/refresh`
 - `POST /api/auth/logout`
 - `GET /api/me`
+- `DELETE /api/me/account`
 - `DELETE /api/me/identities/{provider}`
 - `GET|POST /api/mfa/entries`
 - `DELETE /api/mfa/entries/{id}`
-
