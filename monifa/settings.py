@@ -19,6 +19,7 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.staticfiles",
     "corsheaders",
+    "Config",
     "core",
 ]
 
@@ -52,6 +53,7 @@ CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS", "http://localhost:5173")
 CORS_ALLOW_CREDENTIALS = False
 CORS_ALLOW_HEADERS = ["accept", "authorization", "content-type", "origin", "user-agent"]
 CSRF_TRUSTED_ORIGINS = []
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 LANGUAGE_CODE = "zh-hans"
 TIME_ZONE = "Asia/Shanghai"
@@ -64,11 +66,3 @@ ACCESS_TOKEN_TTL_SECONDS = 15 * 60
 REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60
 LOGIN_TICKET_TTL_SECONDS = 60
 OAUTH_STATE_TTL_SECONDS = 10 * 60
-
-QITIAN_CLIENT_ID = os.getenv("QITIAN_CLIENT_ID", "")
-QITIAN_CLIENT_SECRET = os.getenv("QITIAN_CLIENT_SECRET", "")
-QITIAN_AUTHORIZE_URL = os.getenv("QITIAN_AUTHORIZE_URL", "https://sso.6-79.cn/oauth/")
-QITIAN_TOKEN_URL = os.getenv("QITIAN_TOKEN_URL", "https://sso.6-79.cn/oauth/token")
-QITIAN_USER_URL = os.getenv("QITIAN_USER_URL", "https://sso.6-79.cn/user/")
-GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
-GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")

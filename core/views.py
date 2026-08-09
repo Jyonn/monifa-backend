@@ -12,6 +12,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
+from Config.models import CI, Config
 from .auth import decode_token, issue_access, issue_refresh, rate_limit, require_access
 from .models import AuditEvent, ExpiringCode, MfaEntry, RefreshSession, User, UserIdentity
 from .providers import PROVIDERS
@@ -26,6 +27,10 @@ def body(request):
 
 def client_ip(request):
     return request.META.get("HTTP_X_FORWARDED_FOR", request.META.get("REMOTE_ADDR", "")).split(",")[0].strip() or None
+
+
+def frontend_url():
+    return Config.get_value_by_key(CI.FRONTEND_URL, settings.FRONTEND_URL).rstrip("/")
 
 
 def consume_code(raw, kind):
@@ -94,7 +99,7 @@ def oauth_callback(request, provider):
     adapter = PROVIDERS.get(provider)
     state = consume_code(request.GET.get("state", ""), ExpiringCode.Kind.OAUTH_STATE)
     if adapter is None or state is None or state.provider != provider or not request.GET.get("code"):
-        return redirect(settings.FRONTEND_URL + "/#/auth/callback?error=oauth_failed")
+        return redirect(frontend_url() + "/#/auth/callback?error=oauth_failed")
     try:
         callback = request.build_absolute_uri(f"/api/auth/{provider}/callback")
         profile = adapter.exchange(request.GET["code"], callback)
@@ -102,7 +107,7 @@ def oauth_callback(request, provider):
             identity = UserIdentity.objects.select_related("user").filter(provider=provider, subject=profile.subject).first()
             if state.link_user:
                 if identity and identity.user_id != state.link_user_id:
-                    return redirect(settings.FRONTEND_URL + "/#/auth/callback?error=identity_in_use")
+                    return redirect(frontend_url() + "/#/auth/callback?error=identity_in_use")
                 user = state.link_user
             elif identity:
                 user = identity.user
@@ -115,9 +120,9 @@ def oauth_callback(request, provider):
             )
         ticket = ExpiringCode.issue(ExpiringCode.Kind.LOGIN_TICKET, settings.LOGIN_TICKET_TTL_SECONDS, user=user)
         AuditEvent.objects.create(user=user, action="auth.login", ip_address=client_ip(request), metadata={"provider": provider})
-        return redirect(settings.FRONTEND_URL + "/#/auth/callback?" + urlencode({"ticket": ticket}))
+        return redirect(frontend_url() + "/#/auth/callback?" + urlencode({"ticket": ticket}))
     except Exception:
-        return redirect(settings.FRONTEND_URL + "/#/auth/callback?error=oauth_failed")
+        return redirect(frontend_url() + "/#/auth/callback?error=oauth_failed")
 
 
 @csrf_exempt
