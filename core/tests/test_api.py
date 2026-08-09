@@ -1,10 +1,12 @@
 import base64
+from unittest.mock import patch
 
-from django.test import TestCase
 from django.core.cache import cache
+from django.test import TestCase
 
 from core.auth import issue_access
-from core.models import MfaEntry, User
+from core.models import MfaEntry, User, UserIdentity
+from core.providers import ProviderProfile
 
 
 class MfaEntryApiTests(TestCase):
@@ -57,3 +59,27 @@ class MfaEntryApiTests(TestCase):
         limited = self.client.post("/auth/ticket", {"ticket": "invalid"}, content_type="application/json", REMOTE_ADDR="192.0.2.4")
         self.assertEqual(limited.status_code, 429)
         self.assertEqual(limited["Retry-After"], "60")
+
+
+class OAuthCallbackTests(TestCase):
+    @patch("core.views.PROVIDERS")
+    def test_qitian_callback_accepts_missing_state(self, providers):
+        providers.get.return_value.exchange.return_value = ProviderProfile(
+            subject="qitian-user-app-id",
+            username="jyonn",
+            display_name="Jyonn",
+        )
+
+        response = self.client.get("/auth/qitian/callback", {"code": "fresh-code"})
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/#/auth/callback?ticket=", response["Location"])
+        self.assertTrue(UserIdentity.objects.filter(provider="qitian", subject="qitian-user-app-id").exists())
+
+    @patch("core.views.PROVIDERS")
+    def test_github_callback_rejects_missing_state(self, providers):
+        response = self.client.get("/auth/github/callback", {"code": "fresh-code"})
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response["Location"].endswith("/#/auth/callback?error=oauth_failed"))
+        providers.get.return_value.exchange.assert_not_called()
