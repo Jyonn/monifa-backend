@@ -16,7 +16,7 @@ class ConfigModelTests(TestCase):
         self.assertEqual(Config.get_value_by_key("missing", "fallback"), "fallback")
 
     def test_qitian_provider_reads_database_config(self):
-        Config.update_value(CI.QITIAN_HOST, "https://accounts.example.test/")
+        Config.update_value(CI.QITIAN_OAUTH_HOST, "https://accounts.example.test/")
         Config.update_value(CI.QITIAN_APP_ID, "database-app-id")
 
         authorize_url = QitianProvider().authorize_url("state-value", "https://api.example.test/callback")

@@ -45,10 +45,10 @@ class ConfigInstance:
     QITIAN_APP_ID = "qt-app-id"
     QITIAN_APP_SECRET = "qt-app-secret"
     QITIAN_HOST = "qt-host"
+    QITIAN_OAUTH_HOST = "qt-oauth-host"
 
     GITHUB_CLIENT_ID = "github-client-id"
     GITHUB_CLIENT_SECRET = "github-client-secret"
 
 
 CI = ConfigInstance
-

@@ -49,13 +49,13 @@ class QitianProvider:
     name = "qitian"
 
     def authorize_url(self, state, callback):
-        host = Config.get_value_by_key(CI.QITIAN_HOST, "https://sso.6-79.cn").rstrip("/")
+        host = Config.get_value_by_key(CI.QITIAN_OAUTH_HOST, "https://qt.6-79.cn").rstrip("/")
         return host + "/oauth/?" + urlencode(
             {"app_id": Config.get_value_by_key(CI.QITIAN_APP_ID, ""), "redirect_uri": callback, "state": state}
         )
 
     def exchange(self, code, callback):
-        host = Config.get_value_by_key(CI.QITIAN_HOST, "https://sso.6-79.cn").rstrip("/")
+        host = Config.get_value_by_key(CI.QITIAN_HOST, "https://api.qt.6-79.cn").rstrip("/")
         response = requests.post(
             host + "/oauth/token",
             json={"code": code, "app_secret": Config.get_value_by_key(CI.QITIAN_APP_SECRET, "")},

@@ -21,7 +21,8 @@ OAuth credentials and runtime application URLs follow Disk's database-backed `Co
 
 ```bash
 .venv/bin/python manage.py setconfig frontend-url https://monifa.jyonn.space
-.venv/bin/python manage.py setconfig qt-host https://sso.6-79.cn
+.venv/bin/python manage.py setconfig qt-oauth-host https://qt.6-79.cn
+.venv/bin/python manage.py setconfig qt-host https://api.qt.6-79.cn
 .venv/bin/python manage.py setconfig qt-app-id YOUR_QITIAN_APP_ID
 .venv/bin/python manage.py setconfig qt-app-secret YOUR_QITIAN_APP_SECRET
 .venv/bin/python manage.py setconfig github-client-id YOUR_GITHUB_CLIENT_ID
