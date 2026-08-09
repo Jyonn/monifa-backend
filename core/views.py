@@ -74,7 +74,7 @@ def oauth_start(request, provider):
         except jwt.PyJWTError:
             pass
     state = ExpiringCode.issue(ExpiringCode.Kind.OAUTH_STATE, settings.OAUTH_STATE_TTL_SECONDS, provider=provider, link_user=link_user)
-    callback = request.build_absolute_uri(f"/api/auth/{provider}/callback")
+    callback = request.build_absolute_uri(f"/auth/{provider}/callback")
     return redirect(adapter.authorize_url(state, callback))
 
 
@@ -90,7 +90,7 @@ def oauth_link_start(request, provider):
         provider=provider,
         link_user=request.monifa_user,
     )
-    callback = request.build_absolute_uri(f"/api/auth/{provider}/callback")
+    callback = request.build_absolute_uri(f"/auth/{provider}/callback")
     return JsonResponse({"authorizeUrl": adapter.authorize_url(state, callback)})
 
 
@@ -101,7 +101,7 @@ def oauth_callback(request, provider):
     if adapter is None or state is None or state.provider != provider or not request.GET.get("code"):
         return redirect(frontend_url() + "/#/auth/callback?error=oauth_failed")
     try:
-        callback = request.build_absolute_uri(f"/api/auth/{provider}/callback")
+        callback = request.build_absolute_uri(f"/auth/{provider}/callback")
         profile = adapter.exchange(request.GET["code"], callback)
         with transaction.atomic():
             identity = UserIdentity.objects.select_related("user").filter(provider=provider, subject=profile.subject).first()
