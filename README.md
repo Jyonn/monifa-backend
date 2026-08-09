@@ -8,11 +8,12 @@ Django API for Monifa, a multi-SSO TOTP authenticator web app.
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp .env.example .env
+cp mysql.local.conf.example mysql.local.conf
 .venv/bin/python manage.py migrate
 .venv/bin/python manage.py runserver
 ```
 
-When `MYSQL_DATABASE` is unset, development and tests use SQLite. Production is designed for MySQL 8 through PyMySQL.
+Database credentials live in the ignored `mysql.local.conf`, matching the Disk application. Django passes that file to the MySQL client through `read_default_file`. When the file is absent, development and automated tests fall back to SQLite.
 
 ## Authentication
 

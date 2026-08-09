@@ -33,16 +33,16 @@ ROOT_URLCONF = "monifa.urls"
 WSGI_APPLICATION = "monifa.wsgi.application"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-if os.getenv("MYSQL_DATABASE"):
+MYSQL_CONFIG_FILE = BASE_DIR / "mysql.local.conf"
+
+if MYSQL_CONFIG_FILE.exists():
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.mysql",
-            "NAME": os.environ["MYSQL_DATABASE"],
-            "USER": os.getenv("MYSQL_USER", "root"),
-            "PASSWORD": os.getenv("MYSQL_PASSWORD", ""),
-            "HOST": os.getenv("MYSQL_HOST", "127.0.0.1"),
-            "PORT": os.getenv("MYSQL_PORT", "3306"),
-            "OPTIONS": {"charset": "utf8mb4"},
+            "OPTIONS": {
+                "charset": "utf8mb4",
+                "read_default_file": str(MYSQL_CONFIG_FILE),
+            },
         }
     }
 else:
