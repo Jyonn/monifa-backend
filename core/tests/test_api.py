@@ -83,3 +83,45 @@ class OAuthCallbackTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertTrue(response["Location"].endswith("/#/auth/callback?error=oauth_failed"))
         providers.get.return_value.exchange.assert_not_called()
+
+
+class QitianCliAuthTests(TestCase):
+    @patch("core.views.PROVIDERS")
+    def test_exchanges_qitian_code_for_monifa_session(self, providers):
+        providers.get.return_value.exchange.return_value = ProviderProfile(
+            subject="qitian-cli-user",
+            username="jyonn",
+            display_name="Jyonn",
+        )
+
+        response = self.client.post(
+            "/auth/qitian/cli",
+            {"code": "one-time-code"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("accessToken", response.json())
+        self.assertIn("refreshToken", response.json())
+        self.assertEqual(response.json()["user"]["displayName"], "Jyonn")
+        self.assertTrue(UserIdentity.objects.filter(provider="qitian", subject="qitian-cli-user").exists())
+
+    def test_requires_authorization_code(self):
+        response = self.client.post("/auth/qitian/cli", {}, content_type="application/json")
+        self.assertEqual(response.status_code, 400)
+
+    @patch("core.views.PROVIDERS")
+    def test_exchanges_github_device_token(self, providers):
+        providers.get.return_value.profile_from_token.return_value = ProviderProfile(
+            subject="12345", username="jyonn", display_name="Jyonn"
+        )
+
+        response = self.client.post(
+            "/auth/github/cli",
+            {"accessToken": "github-device-token"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        providers.get.return_value.profile_from_token.assert_called_once_with("github-device-token")
+        self.assertTrue(UserIdentity.objects.filter(provider="github", subject="12345").exists())

@@ -7,6 +7,7 @@ urlpatterns = [
     path("auth/<str:provider>/start", views.oauth_start),
     path("auth/<str:provider>/link", views.oauth_link_start),
     path("auth/<str:provider>/callback", views.oauth_callback),
+    path("auth/<str:provider>/cli", views.provider_cli_auth),
     path("auth/ticket", views.exchange_ticket),
     path("auth/refresh", views.refresh),
     path("auth/logout", views.logout),

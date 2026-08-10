@@ -60,6 +60,24 @@ def profile_json(user):
     }
 
 
+def resolve_profile_user(provider, profile, link_user=None):
+    identity = UserIdentity.objects.select_related("user").filter(provider=provider, subject=profile.subject).first()
+    if link_user:
+        if identity and identity.user_id != link_user.pk:
+            return None
+        user = link_user
+    elif identity:
+        user = identity.user
+    else:
+        user = User.objects.create(display_name=profile.display_name, avatar_url=profile.avatar_url)
+    UserIdentity.objects.update_or_create(
+        provider=provider,
+        subject=profile.subject,
+        defaults={"user": user, "username": profile.username, "email": profile.email, "avatar_url": profile.avatar_url, "metadata": profile.metadata or {}},
+    )
+    return user
+
+
 def health(request):
     return JsonResponse({"status": "ok", "serverTime": int(timezone.now().timestamp())})
 
@@ -111,27 +129,49 @@ def oauth_callback(request, provider):
         callback = request.build_absolute_uri(f"/auth/{provider}/callback")
         profile = adapter.exchange(request.GET["code"], callback)
         with transaction.atomic():
-            identity = UserIdentity.objects.select_related("user").filter(provider=provider, subject=profile.subject).first()
             link_user = state.link_user if state else None
-            if link_user:
-                if identity and identity.user_id != link_user.pk:
-                    return redirect(frontend_url() + "/#/auth/callback?error=identity_in_use")
-                user = link_user
-            elif identity:
-                user = identity.user
-            else:
-                user = User.objects.create(display_name=profile.display_name, avatar_url=profile.avatar_url)
-            UserIdentity.objects.update_or_create(
-                provider=provider,
-                subject=profile.subject,
-                defaults={"user": user, "username": profile.username, "email": profile.email, "avatar_url": profile.avatar_url, "metadata": profile.metadata or {}},
-            )
+            user = resolve_profile_user(provider, profile, link_user)
+            if user is None:
+                return redirect(frontend_url() + "/#/auth/callback?error=identity_in_use")
         ticket = ExpiringCode.issue(ExpiringCode.Kind.LOGIN_TICKET, settings.LOGIN_TICKET_TTL_SECONDS, user=user)
         AuditEvent.objects.create(user=user, action="auth.login", ip_address=client_ip(request), metadata={"provider": provider})
         return redirect(frontend_url() + "/#/auth/callback?" + urlencode({"ticket": ticket}))
     except Exception:
         logger.exception("OAuth callback failed provider=%s", provider)
         return redirect(frontend_url() + "/#/auth/callback?error=oauth_failed")
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+@rate_limit("provider_cli", 20)
+def provider_cli_auth(request, provider):
+    adapter = PROVIDERS.get(provider)
+    if adapter is None:
+        return JsonResponse({"error": "unsupported_provider"}, status=404)
+    if request.method == "GET":
+        app_id = Config.get_value_by_key(CI.QITIAN_APP_ID, "") if provider == UserIdentity.Provider.QITIAN else Config.get_value_by_key(CI.GITHUB_CLIENT_ID, "")
+        return JsonResponse({"appId": app_id})
+    data = body(request) or {}
+    try:
+        if provider == UserIdentity.Provider.QITIAN:
+            code = str(data.get("code", "")).strip()
+            if not code:
+                return JsonResponse({"error": "authorization_code_required"}, status=400)
+            profile = adapter.exchange(code, "")
+        elif provider == UserIdentity.Provider.GITHUB:
+            access_token = str(data.get("accessToken", "")).strip()
+            if not access_token:
+                return JsonResponse({"error": "access_token_required"}, status=400)
+            profile = adapter.profile_from_token(access_token)
+        else:
+            return JsonResponse({"error": "unsupported_provider"}, status=404)
+        with transaction.atomic():
+            user = resolve_profile_user(provider, profile)
+        AuditEvent.objects.create(user=user, action="auth.login", ip_address=client_ip(request), metadata={"provider": provider, "client": "cli"})
+        return JsonResponse({"accessToken": issue_access(user), "refreshToken": issue_refresh(user), "user": profile_json(user)})
+    except Exception:
+        logger.exception("CLI OAuth exchange failed provider=%s", provider)
+        return JsonResponse({"error": "oauth_failed"}, status=401)
 
 
 @csrf_exempt

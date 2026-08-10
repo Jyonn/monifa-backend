@@ -38,6 +38,9 @@ class GitHubProvider:
         )
         response.raise_for_status()
         token = response.json()["access_token"]
+        return self.profile_from_token(token)
+
+    def profile_from_token(self, token):
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
         user = requests.get("https://api.github.com/user", headers=headers, timeout=8).json()
         emails = requests.get("https://api.github.com/user/emails", headers=headers, timeout=8).json()

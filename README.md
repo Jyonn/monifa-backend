@@ -35,6 +35,10 @@ The command values may appear in shell history. On a shared production host, use
 
 Monifa supports Qitian and GitHub OAuth identities through a provider-neutral `UserIdentity` model. OAuth callbacks issue a short-lived, one-time login ticket. The frontend exchanges it for a 15-minute access JWT and rotating 30-day refresh JWT.
 
+The companion `monifa-cli` uses `qt app oauth` for Qitian and GitHub's Device
+Flow. It exchanges the resulting proof through `/auth/{provider}/cli`. These
+endpoints publish only OAuth App IDs; provider secrets remain server-side.
+
 All API authentication uses `Authorization: Bearer`; cookies and CSRF authentication are intentionally disabled. Configure only exact frontend origins in `CORS_ALLOWED_ORIGINS`.
 
 Login-ticket exchange, token refresh and MFA CRUD endpoints use a Django Cache-backed per-client rate limit. Production deployments with multiple Gunicorn workers should configure a shared cache backend such as Redis so limits apply across processes.
@@ -48,6 +52,7 @@ The current product decision stores TOTP secrets in plaintext so the web client 
 - `GET /auth/{qitian|github}/start`
 - `GET /auth/{qitian|github}/link`
 - `GET /auth/{provider}/callback`
+- `GET|POST /auth/{qitian|github}/cli`
 - `POST /auth/ticket`
 - `POST /auth/refresh`
 - `POST /auth/logout`
