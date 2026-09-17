@@ -68,6 +68,37 @@ class MfaEntry(models.Model):
         super().save(*args, **kwargs)
 
 
+class MfaShare(models.Model):
+    entry = models.OneToOneField(MfaEntry, related_name="share", on_delete=models.CASCADE)
+    token_hash = models.CharField(max_length=64, unique=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_accessed_at = models.DateTimeField(null=True, blank=True)
+
+    @staticmethod
+    def digest(token):
+        return hashlib.sha256(token.encode()).hexdigest()
+
+    @classmethod
+    def issue(cls, entry, expires_at=None):
+        token = secrets.token_urlsafe(32)
+        cls.objects.update_or_create(
+            entry=entry,
+            defaults={
+                "token_hash": cls.digest(token),
+                "expires_at": expires_at,
+                "revoked_at": None,
+                "last_accessed_at": None,
+            },
+        )
+        return token
+
+    @property
+    def active(self):
+        return self.revoked_at is None and (self.expires_at is None or self.expires_at > timezone.now())
+
+
 class RefreshSession(models.Model):
     user = models.ForeignKey(User, related_name="sessions", on_delete=models.CASCADE)
     token_id = models.UUIDField(default=uuid.uuid4, unique=True)
@@ -114,4 +145,3 @@ class AuditEvent(models.Model):
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-

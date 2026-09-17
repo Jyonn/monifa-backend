@@ -61,3 +61,9 @@ The current product decision stores TOTP secrets in plaintext so the web client 
 - `DELETE /me/identities/{provider}`
 - `GET|POST /mfa/entries`
 - `DELETE /mfa/entries/{id}`
+- `POST|DELETE /mfa/entries/{id}/share`
+- `GET /shares/{token}` (public bearer-link access)
+
+Creating a share accepts `ttlSeconds` as `3600`, `86400`, `604800`, or `null` for no expiry. Only one share is active per entry; creating another immediately invalidates the previous URL. The public response contains the current code and display metadata, never the TOTP secret. Share tokens are stored as SHA-256 digests and can be revoked by the entry owner.
+
+After deploying a version that introduces sharing, run `python manage.py migrate` before restarting Gunicorn.

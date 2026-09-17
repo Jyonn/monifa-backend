@@ -15,8 +15,9 @@ from django.views.decorators.http import require_http_methods
 
 from Config.models import CI, Config
 from .auth import decode_token, issue_access, issue_refresh, rate_limit, require_access
-from .models import AuditEvent, ExpiringCode, MfaEntry, RefreshSession, User, UserIdentity
+from .models import AuditEvent, ExpiringCode, MfaEntry, MfaShare, RefreshSession, User, UserIdentity
 from .providers import PROVIDERS
+from .totp import generate_totp
 
 
 logger = logging.getLogger(__name__)
@@ -241,6 +242,10 @@ def validate_entry(data):
 
 
 def entry_json(entry):
+    try:
+        share_active = entry.share.active
+    except MfaShare.DoesNotExist:
+        share_active = False
     return {
         "id": entry.pk,
         "issuer": entry.issuer,
@@ -250,6 +255,7 @@ def entry_json(entry):
         "digits": entry.digits,
         "period": entry.period,
         "createdAt": entry.created_at.isoformat(),
+        "shareActive": share_active,
     }
 
 
@@ -259,13 +265,14 @@ def entry_json(entry):
 @rate_limit("mfa_entries", 120)
 def entries(request):
     if request.method == "GET":
+        entry_list = list(request.monifa_user.mfa_entries.select_related("share"))
         AuditEvent.objects.create(
             user=request.monifa_user,
             action="mfa.read",
             ip_address=client_ip(request),
-            metadata={"count": request.monifa_user.mfa_entries.count()},
+            metadata={"count": len(entry_list)},
         )
-        response = JsonResponse({"entries": [entry_json(item) for item in request.monifa_user.mfa_entries.all()], "serverTime": int(timezone.now().timestamp())})
+        response = JsonResponse({"entries": [entry_json(item) for item in entry_list], "serverTime": int(timezone.now().timestamp())})
         response["Cache-Control"] = "no-store"
         return response
     values = validate_entry(body(request) or {})
@@ -291,6 +298,68 @@ def entry_detail(request, entry_id):
     entry.delete()
     AuditEvent.objects.create(user=request.monifa_user, action="mfa.delete", target_id=str(entry_id), ip_address=client_ip(request), metadata=audit)
     return JsonResponse({}, status=204)
+
+
+@csrf_exempt
+@require_access
+@require_http_methods(["POST", "DELETE"])
+@rate_limit("mfa_share_manage", 30)
+def entry_share(request, entry_id):
+    entry = request.monifa_user.mfa_entries.filter(pk=entry_id).first()
+    if entry is None:
+        return JsonResponse({"error": "not_found"}, status=404)
+    if request.method == "DELETE":
+        MfaShare.objects.filter(entry=entry, revoked_at__isnull=True).update(revoked_at=timezone.now())
+        AuditEvent.objects.create(user=request.monifa_user, action="mfa.share.revoke", target_id=str(entry_id), ip_address=client_ip(request))
+        return JsonResponse({}, status=204)
+
+    data = body(request) or {}
+    try:
+        ttl_seconds = data.get("ttlSeconds", 86400)
+        if ttl_seconds is not None:
+            ttl_seconds = int(ttl_seconds)
+            if ttl_seconds not in (3600, 86400, 604800):
+                raise ValueError
+            expires_at = timezone.now() + timezone.timedelta(seconds=ttl_seconds)
+        else:
+            expires_at = None
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "invalid_share_expiry"}, status=400)
+
+    token = MfaShare.issue(entry, expires_at)
+    AuditEvent.objects.create(
+        user=request.monifa_user,
+        action="mfa.share.create",
+        target_id=str(entry_id),
+        ip_address=client_ip(request),
+        metadata={"expiresAt": expires_at.isoformat() if expires_at else None},
+    )
+    return JsonResponse({"token": token, "expiresAt": expires_at.isoformat() if expires_at else None}, status=201)
+
+
+@require_http_methods(["GET"])
+@rate_limit("mfa_share_read", 120)
+def shared_entry(request, token):
+    share = MfaShare.objects.select_related("entry").filter(token_hash=MfaShare.digest(token)).first()
+    if share is None or not share.active:
+        return JsonResponse({"error": "share_not_found"}, status=404)
+    now = timezone.now()
+    code, remaining = generate_totp(share.entry, now.timestamp())
+    MfaShare.objects.filter(pk=share.pk).update(last_accessed_at=now)
+    response = JsonResponse(
+        {
+            "issuer": share.entry.issuer,
+            "accountName": share.entry.account_name,
+            "code": code,
+            "remaining": remaining,
+            "period": share.entry.period,
+            "serverTime": int(now.timestamp()),
+            "expiresAt": share.expires_at.isoformat() if share.expires_at else None,
+        }
+    )
+    response["Cache-Control"] = "no-store, private"
+    response["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 @csrf_exempt

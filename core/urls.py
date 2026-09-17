@@ -16,4 +16,6 @@ urlpatterns = [
     path("me/identities/<str:provider>", views.unlink_identity),
     path("mfa/entries", views.entries),
     path("mfa/entries/<int:entry_id>", views.entry_detail),
+    path("mfa/entries/<int:entry_id>/share", views.entry_share),
+    path("shares/<str:token>", views.shared_entry),
 ]
