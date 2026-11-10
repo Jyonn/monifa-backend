@@ -47,8 +47,4 @@ class ConfigInstance:
     QITIAN_HOST = "qt-host"
     QITIAN_OAUTH_HOST = "qt-oauth-host"
 
-    GITHUB_CLIENT_ID = "github-client-id"
-    GITHUB_CLIENT_SECRET = "github-client-secret"
-
-
 CI = ConfigInstance

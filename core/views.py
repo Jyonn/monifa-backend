@@ -184,6 +184,8 @@ def oauth_link_start(request, provider):
 @require_http_methods(["GET"])
 def oauth_callback(request, provider):
     adapter = PROVIDERS.get(provider)
+    if adapter is None:
+        return redirect(frontend_url() + "/#/auth/callback?error=oauth_failed")
     raw_state = request.GET.get("state", "")
     frienden = provider == UserIdentity.Provider.FRIENDEN
     if frienden and (not raw_state or not constant_time_compare(raw_state, request.COOKIES.get(FRIENDEN_STATE_COOKIE, ""))):
@@ -204,7 +206,7 @@ def oauth_callback(request, provider):
         return response
 
     code = request.GET.get("code", "")
-    if adapter is None or invalid_state or not code or (frienden and not state.pkce_verifier):
+    if invalid_state or not code or (frienden and not state.pkce_verifier):
         return finish(error="oauth_failed")
     try:
         callback = request.build_absolute_uri(f"/auth/{provider}/callback")
@@ -237,28 +239,19 @@ def oauth_callback(request, provider):
 @require_http_methods(["GET", "POST"])
 @rate_limit("provider_cli", 20)
 def provider_cli_auth(request, provider):
-    if provider not in (UserIdentity.Provider.QITIAN, UserIdentity.Provider.GITHUB):
+    if provider != UserIdentity.Provider.QITIAN:
         return JsonResponse({"error": "unsupported_provider"}, status=404)
     adapter = PROVIDERS.get(provider)
     if adapter is None:
         return JsonResponse({"error": "unsupported_provider"}, status=404)
     if request.method == "GET":
-        app_id = Config.get_value_by_key(CI.QITIAN_APP_ID, "") if provider == UserIdentity.Provider.QITIAN else Config.get_value_by_key(CI.GITHUB_CLIENT_ID, "")
-        return JsonResponse({"appId": app_id})
+        return JsonResponse({"appId": Config.get_value_by_key(CI.QITIAN_APP_ID, "")})
     data = body(request) or {}
+    code = str(data.get("code", "")).strip()
+    if not code:
+        return JsonResponse({"error": "authorization_code_required"}, status=400)
     try:
-        if provider == UserIdentity.Provider.QITIAN:
-            code = str(data.get("code", "")).strip()
-            if not code:
-                return JsonResponse({"error": "authorization_code_required"}, status=400)
-            profile = adapter.exchange(code, "")
-        elif provider == UserIdentity.Provider.GITHUB:
-            access_token = str(data.get("accessToken", "")).strip()
-            if not access_token:
-                return JsonResponse({"error": "access_token_required"}, status=400)
-            profile = adapter.profile_from_token(access_token)
-        else:
-            return JsonResponse({"error": "unsupported_provider"}, status=404)
+        profile = adapter.exchange(code, "")
         with transaction.atomic():
             user = resolve_profile_user(provider, profile)
         AuditEvent.objects.create(user=user, action="auth.login", ip_address=client_ip(request), metadata={"provider": provider, "client": "cli"})
@@ -462,7 +455,7 @@ def shared_entry(request, token):
 def unlink_identity(request, provider):
     user = User.objects.select_for_update().get(pk=request.monifa_user.pk)
     identities = user.identities.all()
-    if not identities.exclude(provider=provider).exists():
+    if not identities.filter(provider__in=PROVIDERS).exclude(provider=provider).exists():
         return JsonResponse({"error": "last_identity"}, status=409)
     deleted, _ = identities.filter(provider=provider).delete()
     if not deleted:

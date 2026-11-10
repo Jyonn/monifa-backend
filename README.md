@@ -25,19 +25,15 @@ OAuth credentials and runtime application URLs follow Disk's database-backed `Co
 .venv/bin/python manage.py setconfig qt-host https://api.qt.6-79.cn
 .venv/bin/python manage.py setconfig qt-app-id YOUR_QITIAN_APP_ID
 .venv/bin/python manage.py setconfig qt-app-secret YOUR_QITIAN_APP_SECRET
-.venv/bin/python manage.py setconfig github-client-id YOUR_GITHUB_CLIENT_ID
-.venv/bin/python manage.py setconfig github-client-secret YOUR_GITHUB_CLIENT_SECRET
 ```
 
 The command values may appear in shell history. On a shared production host, use a protected deployment script or write the values through a Django shell reading protected files. Database connection settings, `DJANGO_SECRET_KEY`, allowed hosts and CORS remain startup configuration because Django needs them before it can query `Config`.
 
 ## Authentication
 
-Monifa · 时符 supports Qitian and GitHub OAuth identities through a provider-neutral `UserIdentity` model. OAuth callbacks issue a short-lived, one-time login ticket. The frontend exchanges it for a 15-minute access JWT and rotating 30-day refresh JWT.
+Monifa · 时符 uses Frienden as its primary web sign-in option and also supports Qitian. OAuth callbacks issue a short-lived, one-time login ticket. The frontend exchanges it for a 15-minute access JWT and rotating 30-day refresh JWT.
 
-The companion `monifa-cli` uses `qt app oauth` for Qitian and GitHub's Device
-Flow. It exchanges the resulting proof through `/auth/{provider}/cli`. These
-endpoints publish only OAuth App IDs; provider secrets remain server-side.
+The companion `monifa-cli` uses `qt app oauth` for Qitian and exchanges the resulting code through `/auth/qitian/cli`. This endpoint publishes the Qitian OAuth App ID. The app secret stays server-side.
 
 API sessions use `Authorization: Bearer`. Frienden OAuth uses a short-lived, host-only cookie to bind the callback to the browser that started the flow. Configure exact frontend origins in `CORS_ALLOWED_ORIGINS` and serve the web frontend and API over HTTPS on the same site.
 
@@ -45,7 +41,7 @@ API sessions use `Authorization: Bearer`. Frienden OAuth uses a short-lived, hos
 
 The registered client defaults to `monifa` with the exact callback `https://api.monifa.jyonn.space/auth/frienden/callback`. Approve both the `profile` and `phone` scopes in Frienden before deploying this version, then run `python manage.py migrate` before starting the updated backend. An alternate registration can set `FRIENDEN_CLIENT_ID` and `FRIENDEN_REDIRECT_URI` in the backend runtime environment.
 
-Frienden sign-in resolves accounts by the verified mainland China phone number. Existing Qitian or GitHub users sign in as usual and link Frienden under account settings to associate their verified number with their existing Monifa account. Existing Frienden identities from before the migration obtain their phone mapping at their next authorization when the number is available. Accounts already associated with different Monifa users require separate handling when the same number is presented.
+Frienden sign-in resolves accounts by the verified mainland China phone number. Existing Qitian users can link Frienden under account settings to associate their verified number with their existing Monifa account. Existing Frienden identities from before the migration obtain their phone mapping at their next authorization when the number is available. Accounts already associated with different Monifa users require separate handling when the same number is presented.
 
 If an existing Frienden subject presents a changed number, sign in through an existing session or another linked identity and use the phone sync action in settings. Unlinking Frienden removes its phone association.
 
@@ -57,10 +53,10 @@ The current product decision stores TOTP secrets in plaintext so the web client 
 
 ## API
 
-- `GET /auth/{qitian|github|frienden}/start`
-- `GET /auth/{qitian|github|frienden}/link`
+- `GET /auth/{qitian|frienden}/start`
+- `GET /auth/{qitian|frienden}/link`
 - `GET /auth/{provider}/callback`
-- `GET|POST /auth/{qitian|github}/cli`
+- `GET|POST /auth/qitian/cli`
 - `POST /auth/ticket`
 - `POST /auth/refresh`
 - `POST /auth/logout`

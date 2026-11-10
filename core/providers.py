@@ -25,38 +25,6 @@ class FriendenPhoneUnverified(ValueError):
     pass
 
 
-class GitHubProvider:
-    name = "github"
-
-    def authorize_url(self, state, callback):
-        return "https://github.com/login/oauth/authorize?" + urlencode(
-            {"client_id": Config.get_value_by_key(CI.GITHUB_CLIENT_ID, ""), "redirect_uri": callback, "scope": "read:user user:email", "state": state}
-        )
-
-    def exchange(self, code, callback):
-        response = requests.post(
-            "https://github.com/login/oauth/access_token",
-            headers={"Accept": "application/json"},
-            json={
-                "client_id": Config.get_value_by_key(CI.GITHUB_CLIENT_ID, ""),
-                "client_secret": Config.get_value_by_key(CI.GITHUB_CLIENT_SECRET, ""),
-                "code": code,
-                "redirect_uri": callback,
-            },
-            timeout=8,
-        )
-        response.raise_for_status()
-        token = response.json()["access_token"]
-        return self.profile_from_token(token)
-
-    def profile_from_token(self, token):
-        headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
-        user = requests.get("https://api.github.com/user", headers=headers, timeout=8).json()
-        emails = requests.get("https://api.github.com/user/emails", headers=headers, timeout=8).json()
-        primary = next((item["email"] for item in emails if item.get("primary") and item.get("verified")), "")
-        return ProviderProfile(str(user["id"]), user.get("login", ""), user.get("name") or user.get("login", ""), primary, user.get("avatar_url", ""), {"profile_url": user.get("html_url", "")})
-
-
 class QitianProvider:
     name = "qitian"
 
@@ -141,4 +109,4 @@ class FriendenProvider:
         )
 
 
-PROVIDERS = {"github": GitHubProvider(), "qitian": QitianProvider(), "frienden": FriendenProvider()}
+PROVIDERS = {"qitian": QitianProvider(), "frienden": FriendenProvider()}

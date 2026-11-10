@@ -5,7 +5,7 @@ from django.core.cache import cache
 from django.test import TestCase
 
 from core.auth import issue_access
-from core.models import MfaEntry, User, UserIdentity
+from core.models import ExpiringCode, MfaEntry, User, UserIdentity
 from core.providers import ProviderProfile
 
 
@@ -76,13 +76,27 @@ class OAuthCallbackTests(TestCase):
         self.assertIn("/#/auth/callback?ticket=", response["Location"])
         self.assertTrue(UserIdentity.objects.filter(provider="qitian", subject="qitian-user-app-id").exists())
 
-    @patch("core.views.PROVIDERS")
-    def test_github_callback_rejects_missing_state(self, providers):
-        response = self.client.get("/auth/github/callback", {"code": "fresh-code"})
+    def test_github_login_and_link_are_disabled(self):
+        user = User.objects.create()
+        headers = {"HTTP_AUTHORIZATION": f"Bearer {issue_access(user)}"}
+        self.assertEqual(self.client.get("/auth/github/start").status_code, 404)
+        self.assertEqual(self.client.get("/auth/github/link", **headers).status_code, 404)
+
+        state = ExpiringCode.issue(ExpiringCode.Kind.OAUTH_STATE, 60, provider="github", link_user=user)
+        response = self.client.get("/auth/github/callback", {"code": "fresh-code", "state": state})
 
         self.assertEqual(response.status_code, 302)
         self.assertTrue(response["Location"].endswith("/#/auth/callback?error=oauth_failed"))
-        providers.get.return_value.exchange.assert_not_called()
+        self.assertFalse(ExpiringCode.objects.filter(kind=ExpiringCode.Kind.LOGIN_TICKET).exists())
+
+    def test_retired_github_binding_cannot_replace_an_active_login(self):
+        user = User.objects.create()
+        UserIdentity.objects.create(user=user, provider="qitian", subject="active-qitian")
+        UserIdentity.objects.create(user=user, provider="github", subject="retired-github")
+        headers = {"HTTP_AUTHORIZATION": f"Bearer {issue_access(user)}"}
+
+        self.assertEqual(self.client.delete("/me/identities/qitian", **headers).status_code, 409)
+        self.assertEqual(self.client.delete("/me/identities/github", **headers).status_code, 204)
 
 
 class QitianCliAuthTests(TestCase):
@@ -110,18 +124,12 @@ class QitianCliAuthTests(TestCase):
         response = self.client.post("/auth/qitian/cli", {}, content_type="application/json")
         self.assertEqual(response.status_code, 400)
 
-    @patch("core.views.PROVIDERS")
-    def test_exchanges_github_device_token(self, providers):
-        providers.get.return_value.profile_from_token.return_value = ProviderProfile(
-            subject="12345", username="jyonn", display_name="Jyonn"
-        )
-
+    def test_github_device_flow_is_disabled(self):
+        self.assertEqual(self.client.get("/auth/github/cli").status_code, 404)
         response = self.client.post(
             "/auth/github/cli",
             {"accessToken": "github-device-token"},
             content_type="application/json",
         )
-
-        self.assertEqual(response.status_code, 200)
-        providers.get.return_value.profile_from_token.assert_called_once_with("github-device-token")
-        self.assertTrue(UserIdentity.objects.filter(provider="github", subject="12345").exists())
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(UserIdentity.objects.filter(provider="github").exists())
