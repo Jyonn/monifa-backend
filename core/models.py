@@ -18,6 +18,7 @@ class UserIdentity(models.Model):
     class Provider(models.TextChoices):
         QITIAN = "qitian", "Qitian"
         GITHUB = "github", "GitHub"
+        FRIENDEN = "frienden", "Frienden"
 
     user = models.ForeignKey(User, related_name="identities", on_delete=models.CASCADE)
     provider = models.CharField(max_length=32, choices=Provider.choices)
@@ -120,6 +121,7 @@ class ExpiringCode(models.Model):
     kind = models.CharField(max_length=20, choices=Kind.choices)
     code_hash = models.CharField(max_length=64, unique=True)
     provider = models.CharField(max_length=32, blank=True)
+    pkce_verifier = models.CharField(max_length=128, blank=True)
     user = models.ForeignKey(User, null=True, blank=True, on_delete=models.CASCADE)
     link_user = models.ForeignKey(User, null=True, blank=True, related_name="link_codes", on_delete=models.CASCADE)
     expires_at = models.DateTimeField()

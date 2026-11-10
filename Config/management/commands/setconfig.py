@@ -4,7 +4,7 @@ from Config.models import Config, ConfigInstance
 
 
 class Command(BaseCommand):
-    help = "Create or update a Monifa database configuration value"
+    help = "Create or update a database configuration value for Monifa · 时符"
 
     def add_arguments(self, parser):
         parser.add_argument("key", choices=[

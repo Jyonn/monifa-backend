@@ -1,7 +1,11 @@
+import base64
+import hashlib
+import re
 from dataclasses import dataclass
 from urllib.parse import urlencode
 
 import requests
+from django.conf import settings
 
 from Config.models import CI, Config
 
@@ -74,4 +78,57 @@ class QitianProvider:
         return ProviderProfile(subject, profile.get("qitian", ""), profile.get("nickname", ""), profile.get("email", ""), profile.get("avatar", ""), {})
 
 
-PROVIDERS = {"github": GitHubProvider(), "qitian": QitianProvider()}
+class FriendenProvider:
+    api_url = "https://api.sermo.jyonn.space/users/oauth/"
+
+    def authorize_url(self, state, verifier):
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).decode("ascii").rstrip("=")
+        return "https://frienden.jyonn.space/oauth/authorize?" + urlencode({
+            "client_id": settings.FRIENDEN_CLIENT_ID,
+            "redirect_uri": settings.FRIENDEN_REDIRECT_URI,
+            "response_type": "code",
+            "scope": "profile",
+            "state": state,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+        })
+
+    def request(self, method, endpoint, *, form=None, token=None):
+        headers = {"Accept": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        with requests.request(method, self.api_url + endpoint, data=form, headers=headers, timeout=(4, 8), allow_redirects=False) as response:
+            if response.status_code != 200:
+                raise ValueError("Frienden OAuth request failed")
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("Invalid Frienden OAuth response")
+            return payload
+
+    def exchange(self, code, verifier):
+        token = self.request("POST", "token", form={
+            "grant_type": "authorization_code",
+            "client_id": settings.FRIENDEN_CLIENT_ID,
+            "redirect_uri": settings.FRIENDEN_REDIRECT_URI,
+            "code": code,
+            "code_verifier": verifier,
+        }).get("access_token")
+        if not isinstance(token, str) or not token:
+            raise ValueError("Missing Frienden access token")
+        try:
+            profile = self.request("GET", "userinfo", token=token)
+        finally:
+            try:
+                self.request("POST", "revoke", token=token)
+            except (requests.RequestException, ValueError):
+                pass
+
+        subject = profile.get("sub")
+        if not isinstance(subject, str) or len(subject) > 255 or not re.fullmatch(r"sermo:[0-9]+:[0-9]+", subject):
+            raise ValueError("Invalid Frienden subject")
+        nickname = profile.get("nickname")
+        nickname = nickname.strip() if isinstance(nickname, str) else ""
+        return ProviderProfile(subject, username=nickname[:255], display_name=nickname[:120] or "友间用户")
+
+
+PROVIDERS = {"github": GitHubProvider(), "qitian": QitianProvider(), "frienden": FriendenProvider()}

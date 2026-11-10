@@ -50,7 +50,7 @@ else:
     DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": BASE_DIR / "db.sqlite3"}}
 
 CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS", "http://localhost:5173")
-CORS_ALLOW_CREDENTIALS = False
+CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = ["accept", "authorization", "content-type", "origin", "user-agent"]
 CSRF_TRUSTED_ORIGINS = []
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
@@ -62,6 +62,8 @@ USE_TZ = True
 STATIC_URL = "static/"
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+FRIENDEN_CLIENT_ID = os.getenv("FRIENDEN_CLIENT_ID", "monifa")
+FRIENDEN_REDIRECT_URI = os.getenv("FRIENDEN_REDIRECT_URI", "https://api.monifa.jyonn.space/auth/frienden/callback")
 ACCESS_TOKEN_TTL_SECONDS = 15 * 60
 REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60
 LOGIN_TICKET_TTL_SECONDS = 60

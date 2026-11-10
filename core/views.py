@@ -2,6 +2,7 @@ import base64
 import hashlib
 import json
 import logging
+import secrets
 from urllib.parse import urlencode
 
 import jwt
@@ -10,6 +11,7 @@ from django.db import IntegrityError, transaction
 from django.http import JsonResponse
 from django.shortcuts import redirect
 from django.utils import timezone
+from django.utils.crypto import constant_time_compare
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
@@ -21,6 +23,7 @@ from .totp import generate_totp
 
 
 logger = logging.getLogger(__name__)
+FRIENDEN_STATE_COOKIE = "__Host-monifa-frienden-state"
 
 
 def body(request):
@@ -38,14 +41,14 @@ def frontend_url():
     return Config.get_value_by_key(CI.FRONTEND_URL, settings.FRONTEND_URL).rstrip("/")
 
 
-def consume_code(raw, kind):
+def consume_code(raw, kind, **filters):
     digest = hashlib.sha256(raw.encode()).hexdigest()
     with transaction.atomic():
-        code = ExpiringCode.objects.select_for_update().filter(code_hash=digest, kind=kind).first()
+        code = ExpiringCode.objects.select_for_update().filter(code_hash=digest, kind=kind, **filters).first()
         if not code or code.used_at or code.expires_at <= timezone.now():
             return None
         code.used_at = timezone.now()
-        code.save(update_fields=["used_at"])
+        ExpiringCode.objects.filter(pk=code.pk).update(used_at=code.used_at, pkce_verifier="")
         return code
 
 
@@ -62,6 +65,12 @@ def profile_json(user):
 
 
 def resolve_profile_user(provider, profile, link_user=None):
+    if link_user:
+        link_user = User.objects.select_for_update().get(pk=link_user.pk)
+        if provider == UserIdentity.Provider.FRIENDEN and link_user.identities.filter(
+            provider=provider,
+        ).exclude(subject=profile.subject).exists():
+            return None
     identity = UserIdentity.objects.select_related("user").filter(provider=provider, subject=profile.subject).first()
     if link_user:
         if identity and identity.user_id != link_user.pk:
@@ -71,16 +80,41 @@ def resolve_profile_user(provider, profile, link_user=None):
         user = identity.user
     else:
         user = User.objects.create(display_name=profile.display_name, avatar_url=profile.avatar_url)
-    UserIdentity.objects.update_or_create(
-        provider=provider,
-        subject=profile.subject,
-        defaults={"user": user, "username": profile.username, "email": profile.email, "avatar_url": profile.avatar_url, "metadata": profile.metadata or {}},
-    )
+    details = {"username": profile.username, "email": profile.email, "avatar_url": profile.avatar_url, "metadata": profile.metadata or {}}
+    if identity:
+        for field, value in details.items():
+            setattr(identity, field, value)
+        identity.save(update_fields=[*details, "updated_at"])
+    else:
+        UserIdentity.objects.create(user=user, provider=provider, subject=profile.subject, **details)
     return user
 
 
 def health(request):
     return JsonResponse({"status": "ok", "serverTime": int(timezone.now().timestamp())})
+
+
+def begin_oauth(request, provider, adapter, link_user=None, *, return_url=False):
+    frienden = provider == UserIdentity.Provider.FRIENDEN
+    verifier = secrets.token_urlsafe(48) if frienden else ""
+    state = ExpiringCode.issue(
+        ExpiringCode.Kind.OAUTH_STATE,
+        settings.OAUTH_STATE_TTL_SECONDS,
+        provider=provider,
+        link_user=link_user,
+        pkce_verifier=verifier,
+    )
+    callback = request.build_absolute_uri(f"/auth/{provider}/callback")
+    authorize_url = adapter.authorize_url(state, verifier if frienden else callback)
+    response = JsonResponse({"authorizeUrl": authorize_url}) if return_url else redirect(authorize_url)
+    if frienden:
+        response.set_cookie(
+            FRIENDEN_STATE_COOKIE, state, max_age=settings.OAUTH_STATE_TTL_SECONDS,
+            secure=True, httponly=True, samesite="Lax",
+        )
+        response["Cache-Control"] = "no-store"
+        response["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 @require_http_methods(["GET"])
@@ -90,15 +124,13 @@ def oauth_start(request, provider):
         return JsonResponse({"error": "unsupported_provider"}, status=404)
     link_user = None
     auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
+    if provider != UserIdentity.Provider.FRIENDEN and auth.startswith("Bearer "):
         try:
             payload = decode_token(auth[7:], "access")
             link_user = User.objects.filter(pk=payload["sub"]).first()
         except jwt.PyJWTError:
             pass
-    state = ExpiringCode.issue(ExpiringCode.Kind.OAUTH_STATE, settings.OAUTH_STATE_TTL_SECONDS, provider=provider, link_user=link_user)
-    callback = request.build_absolute_uri(f"/auth/{provider}/callback")
-    return redirect(adapter.authorize_url(state, callback))
+    return begin_oauth(request, provider, adapter, link_user)
 
 
 @require_access
@@ -107,45 +139,58 @@ def oauth_link_start(request, provider):
     adapter = PROVIDERS.get(provider)
     if adapter is None:
         return JsonResponse({"error": "unsupported_provider"}, status=404)
-    state = ExpiringCode.issue(
-        ExpiringCode.Kind.OAUTH_STATE,
-        settings.OAUTH_STATE_TTL_SECONDS,
-        provider=provider,
-        link_user=request.monifa_user,
-    )
-    callback = request.build_absolute_uri(f"/auth/{provider}/callback")
-    return JsonResponse({"authorizeUrl": adapter.authorize_url(state, callback)})
+    return begin_oauth(request, provider, adapter, request.monifa_user, return_url=True)
 
 
 @require_http_methods(["GET"])
 def oauth_callback(request, provider):
     adapter = PROVIDERS.get(provider)
     raw_state = request.GET.get("state", "")
-    state = consume_code(raw_state, ExpiringCode.Kind.OAUTH_STATE) if raw_state else None
-    qitian_without_state = provider == UserIdentity.Provider.QITIAN and not raw_state
-    invalid_state = not qitian_without_state and (state is None or state.provider != provider)
-    if adapter is None or invalid_state or not request.GET.get("code"):
+    frienden = provider == UserIdentity.Provider.FRIENDEN
+    if frienden and (not raw_state or not constant_time_compare(raw_state, request.COOKIES.get(FRIENDEN_STATE_COOKIE, ""))):
         return redirect(frontend_url() + "/#/auth/callback?error=oauth_failed")
+    state = consume_code(raw_state, ExpiringCode.Kind.OAUTH_STATE, provider=provider) if raw_state else None
+    qitian_without_state = provider == UserIdentity.Provider.QITIAN and not raw_state
+    invalid_state = not qitian_without_state and state is None
+    link_user = state.link_user if state else None
+
+    def finish(**params):
+        if frienden and link_user:
+            params["link"] = provider
+        response = redirect(frontend_url() + "/#/auth/callback?" + urlencode(params))
+        if frienden:
+            response.delete_cookie(FRIENDEN_STATE_COOKIE, samesite="Lax")
+            response["Cache-Control"] = "no-store"
+            response["Referrer-Policy"] = "no-referrer"
+        return response
+
+    code = request.GET.get("code", "")
+    if adapter is None or invalid_state or not code or (frienden and not state.pkce_verifier):
+        return finish(error="oauth_failed")
     try:
         callback = request.build_absolute_uri(f"/auth/{provider}/callback")
-        profile = adapter.exchange(request.GET["code"], callback)
+        profile = adapter.exchange(code, state.pkce_verifier if frienden else callback)
         with transaction.atomic():
-            link_user = state.link_user if state else None
             user = resolve_profile_user(provider, profile, link_user)
             if user is None:
-                return redirect(frontend_url() + "/#/auth/callback?error=identity_in_use")
-        ticket = ExpiringCode.issue(ExpiringCode.Kind.LOGIN_TICKET, settings.LOGIN_TICKET_TTL_SECONDS, user=user)
-        AuditEvent.objects.create(user=user, action="auth.login", ip_address=client_ip(request), metadata={"provider": provider})
-        return redirect(frontend_url() + "/#/auth/callback?" + urlencode({"ticket": ticket}))
+                return finish(error="identity_in_use")
+            ticket = ExpiringCode.issue(ExpiringCode.Kind.LOGIN_TICKET, settings.LOGIN_TICKET_TTL_SECONDS, user=user)
+            AuditEvent.objects.create(user=user, action="identity.link" if frienden and link_user else "auth.login", ip_address=client_ip(request), metadata={"provider": provider})
+        return finish(ticket=ticket)
     except Exception:
-        logger.exception("OAuth callback failed provider=%s", provider)
-        return redirect(frontend_url() + "/#/auth/callback?error=oauth_failed")
+        if frienden:
+            logger.warning("Frienden OAuth callback failed")
+        else:
+            logger.exception("OAuth callback failed provider=%s", provider)
+        return finish(error="oauth_failed")
 
 
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
 @rate_limit("provider_cli", 20)
 def provider_cli_auth(request, provider):
+    if provider not in (UserIdentity.Provider.QITIAN, UserIdentity.Provider.GITHUB):
+        return JsonResponse({"error": "unsupported_provider"}, status=404)
     adapter = PROVIDERS.get(provider)
     if adapter is None:
         return JsonResponse({"error": "unsupported_provider"}, status=404)
@@ -365,9 +410,11 @@ def shared_entry(request, token):
 @csrf_exempt
 @require_access
 @require_http_methods(["DELETE"])
+@transaction.atomic
 def unlink_identity(request, provider):
-    identities = request.monifa_user.identities.all()
-    if identities.count() <= 1:
+    user = User.objects.select_for_update().get(pk=request.monifa_user.pk)
+    identities = user.identities.all()
+    if not identities.exclude(provider=provider).exists():
         return JsonResponse({"error": "last_identity"}, status=409)
     deleted, _ = identities.filter(provider=provider).delete()
     if not deleted:

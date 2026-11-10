@@ -1,6 +1,6 @@
-# Monifa Backend
+# Monifa · 时符 Backend
 
-Django API for Monifa, a multi-SSO TOTP authenticator web app.
+Django API for Monifa · 时符, a multi-SSO TOTP authenticator web app.
 
 ## Development
 
@@ -33,24 +33,30 @@ The command values may appear in shell history. On a shared production host, use
 
 ## Authentication
 
-Monifa supports Qitian and GitHub OAuth identities through a provider-neutral `UserIdentity` model. OAuth callbacks issue a short-lived, one-time login ticket. The frontend exchanges it for a 15-minute access JWT and rotating 30-day refresh JWT.
+Monifa · 时符 supports Qitian and GitHub OAuth identities through a provider-neutral `UserIdentity` model. OAuth callbacks issue a short-lived, one-time login ticket. The frontend exchanges it for a 15-minute access JWT and rotating 30-day refresh JWT.
 
 The companion `monifa-cli` uses `qt app oauth` for Qitian and GitHub's Device
 Flow. It exchanges the resulting proof through `/auth/{provider}/cli`. These
 endpoints publish only OAuth App IDs; provider secrets remain server-side.
 
-All API authentication uses `Authorization: Bearer`; cookies and CSRF authentication are intentionally disabled. Configure only exact frontend origins in `CORS_ALLOWED_ORIGINS`.
+API sessions use `Authorization: Bearer`. Frienden OAuth uses a short-lived, host-only cookie to bind the callback to the browser that started the flow. Configure exact frontend origins in `CORS_ALLOWED_ORIGINS` and serve the web frontend and API over HTTPS on the same site.
+
+### Frienden
+
+The registered client defaults to `monifa` with the exact callback `https://api.monifa.jyonn.space/auth/frienden/callback` and the `profile` scope. Run `python manage.py migrate` before starting the updated backend. An alternate registration can set `FRIENDEN_CLIENT_ID` and `FRIENDEN_REDIRECT_URI` in the backend runtime environment.
+
+Existing users can sign in as usual and link Frienden under account settings. Future Frienden sign-ins use the same account and entries. A first Frienden sign-in with an unlinked identity creates a separate account. Linking uses the Frienden subject and requires an authenticated Monifa session.
 
 Login-ticket exchange, token refresh and MFA CRUD endpoints use a Django Cache-backed per-client rate limit. Production deployments with multiple Gunicorn workers should configure a shared cache backend such as Redis so limits apply across processes.
 
 ## Security note
 
-The current product decision stores TOTP secrets in plaintext so the web client can generate codes and cache them offline. Never include secrets, generated codes, OAuth credentials, or JWTs in logs. Database and host access are therefore part of Monifa's security boundary.
+The current product decision stores TOTP secrets in plaintext so the web client can generate codes and cache them offline. Never include secrets, generated codes, OAuth credentials, or JWTs in logs. Database and host access are therefore part of the application's security boundary.
 
 ## API
 
-- `GET /auth/{qitian|github}/start`
-- `GET /auth/{qitian|github}/link`
+- `GET /auth/{qitian|github|frienden}/start`
+- `GET /auth/{qitian|github|frienden}/link`
 - `GET /auth/{provider}/callback`
 - `GET|POST /auth/{qitian|github}/cli`
 - `POST /auth/ticket`
