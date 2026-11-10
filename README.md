@@ -43,9 +43,11 @@ API sessions use `Authorization: Bearer`. Frienden OAuth uses a short-lived, hos
 
 ### Frienden
 
-The registered client defaults to `monifa` with the exact callback `https://api.monifa.jyonn.space/auth/frienden/callback` and the `profile` scope. Run `python manage.py migrate` before starting the updated backend. An alternate registration can set `FRIENDEN_CLIENT_ID` and `FRIENDEN_REDIRECT_URI` in the backend runtime environment.
+The registered client defaults to `monifa` with the exact callback `https://api.monifa.jyonn.space/auth/frienden/callback`. Approve both the `profile` and `phone` scopes in Frienden before deploying this version, then run `python manage.py migrate` before starting the updated backend. An alternate registration can set `FRIENDEN_CLIENT_ID` and `FRIENDEN_REDIRECT_URI` in the backend runtime environment.
 
-Existing users can sign in as usual and link Frienden under account settings. Future Frienden sign-ins use the same account and entries. A first Frienden sign-in with an unlinked identity creates a separate account. Linking uses the Frienden subject and requires an authenticated Monifa session.
+Frienden sign-in resolves accounts by the verified mainland China phone number. Existing Qitian or GitHub users sign in as usual and link Frienden under account settings to associate their verified number with their existing Monifa account. Existing Frienden identities from before the migration obtain their phone mapping at their next authorization when the number is available. Accounts already associated with different Monifa users require separate handling when the same number is presented.
+
+If an existing Frienden subject presents a changed number, sign in through an existing session or another linked identity and use the phone sync action in settings. Unlinking Frienden removes its phone association.
 
 Login-ticket exchange, token refresh and MFA CRUD endpoints use a Django Cache-backed per-client rate limit. Production deployments with multiple Gunicorn workers should configure a shared cache backend such as Redis so limits apply across processes.
 

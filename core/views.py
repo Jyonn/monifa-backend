@@ -18,12 +18,16 @@ from django.views.decorators.http import require_http_methods
 from Config.models import CI, Config
 from .auth import decode_token, issue_access, issue_refresh, rate_limit, require_access
 from .models import AuditEvent, ExpiringCode, MfaEntry, MfaShare, RefreshSession, User, UserIdentity
-from .providers import PROVIDERS
+from .providers import PROVIDERS, FriendenPhoneUnverified
 from .totp import generate_totp
 
 
 logger = logging.getLogger(__name__)
 FRIENDEN_STATE_COOKIE = "__Host-monifa-frienden-state"
+
+
+class FriendenPhoneChanged(ValueError):
+    pass
 
 
 def body(request):
@@ -64,13 +68,19 @@ def profile_json(user):
     }
 
 
+def save_identity(user, provider, profile, identity):
+    details = {"username": profile.username, "email": profile.email, "avatar_url": profile.avatar_url, "metadata": profile.metadata or {}}
+    if identity:
+        for field, value in details.items():
+            setattr(identity, field, value)
+        identity.save(update_fields=[*details, "updated_at"])
+    else:
+        UserIdentity.objects.create(user=user, provider=provider, subject=profile.subject, **details)
+
+
 def resolve_profile_user(provider, profile, link_user=None):
     if link_user:
         link_user = User.objects.select_for_update().get(pk=link_user.pk)
-        if provider == UserIdentity.Provider.FRIENDEN and link_user.identities.filter(
-            provider=provider,
-        ).exclude(subject=profile.subject).exists():
-            return None
     identity = UserIdentity.objects.select_related("user").filter(provider=provider, subject=profile.subject).first()
     if link_user:
         if identity and identity.user_id != link_user.pk:
@@ -80,13 +90,42 @@ def resolve_profile_user(provider, profile, link_user=None):
         user = identity.user
     else:
         user = User.objects.create(display_name=profile.display_name, avatar_url=profile.avatar_url)
-    details = {"username": profile.username, "email": profile.email, "avatar_url": profile.avatar_url, "metadata": profile.metadata or {}}
-    if identity:
-        for field, value in details.items():
-            setattr(identity, field, value)
-        identity.save(update_fields=[*details, "updated_at"])
+    save_identity(user, provider, profile, identity)
+    return user
+
+
+def resolve_frienden_user(profile, link_user=None):
+    provider = UserIdentity.Provider.FRIENDEN
+    phone = profile.verified_phone
+    identities = UserIdentity.objects.filter(provider=provider)
+    matches = identities.filter(subject=profile.subject)
+    if link_user:
+        user = User.objects.select_for_update().get(pk=link_user.pk)
+        identity = matches.first()
+        if identities.filter(user=user).exclude(subject=profile.subject).exists():
+            return None
     else:
-        UserIdentity.objects.create(user=user, provider=provider, subject=profile.subject, **details)
+        identity = matches.first()
+        if identity:
+            user = User.objects.select_for_update().get(pk=identity.user_id)
+            if not matches.select_for_update().filter(pk=identity.pk).exists():
+                return None
+            if user.frienden_phone and user.frienden_phone != phone:
+                raise FriendenPhoneChanged
+        else:
+            user = User.objects.select_for_update().filter(frienden_phone=phone).first()
+            if user:
+                return user
+            user = User.objects.create(display_name=profile.display_name, frienden_phone=phone)
+
+    if identity and identity.user_id != user.pk:
+        return None
+    if user.frienden_phone != phone:
+        if User.objects.filter(frienden_phone=phone).exists():
+            return None
+        user.frienden_phone = phone
+        user.save(update_fields=["frienden_phone"])
+    save_identity(user, provider, profile, identity)
     return user
 
 
@@ -171,14 +210,23 @@ def oauth_callback(request, provider):
         callback = request.build_absolute_uri(f"/auth/{provider}/callback")
         profile = adapter.exchange(code, state.pkce_verifier if frienden else callback)
         with transaction.atomic():
-            user = resolve_profile_user(provider, profile, link_user)
+            if frienden:
+                user = resolve_frienden_user(profile, link_user)
+            else:
+                user = resolve_profile_user(provider, profile, link_user)
             if user is None:
                 return finish(error="identity_in_use")
             ticket = ExpiringCode.issue(ExpiringCode.Kind.LOGIN_TICKET, settings.LOGIN_TICKET_TTL_SECONDS, user=user)
             AuditEvent.objects.create(user=user, action="identity.link" if frienden and link_user else "auth.login", ip_address=client_ip(request), metadata={"provider": provider})
         return finish(ticket=ticket)
-    except Exception:
+    except FriendenPhoneUnverified:
+        return finish(error="frienden_phone_unverified")
+    except FriendenPhoneChanged:
+        return finish(error="frienden_phone_changed")
+    except Exception as error:
         if frienden:
+            if isinstance(error, IntegrityError):
+                return finish(error="identity_in_use")
             logger.warning("Frienden OAuth callback failed")
         else:
             logger.exception("OAuth callback failed provider=%s", provider)
@@ -419,6 +467,9 @@ def unlink_identity(request, provider):
     deleted, _ = identities.filter(provider=provider).delete()
     if not deleted:
         return JsonResponse({"error": "not_found"}, status=404)
+    if provider == UserIdentity.Provider.FRIENDEN:
+        user.frienden_phone = None
+        user.save(update_fields=["frienden_phone"])
     AuditEvent.objects.create(user=request.monifa_user, action="identity.unlink", ip_address=client_ip(request), metadata={"provider": provider})
     return JsonResponse({}, status=204)
 

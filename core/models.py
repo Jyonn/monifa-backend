@@ -8,6 +8,7 @@ from django.utils import timezone
 
 class User(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    frienden_phone = models.CharField(max_length=14, null=True, blank=True, unique=True)
     display_name = models.CharField(max_length=120, blank=True)
     avatar_url = models.URLField(max_length=500, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

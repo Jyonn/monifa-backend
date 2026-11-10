@@ -18,6 +18,11 @@ class ProviderProfile:
     email: str = ""
     avatar_url: str = ""
     metadata: dict | None = None
+    verified_phone: str = ""
+
+
+class FriendenPhoneUnverified(ValueError):
+    pass
 
 
 class GitHubProvider:
@@ -87,7 +92,7 @@ class FriendenProvider:
             "client_id": settings.FRIENDEN_CLIENT_ID,
             "redirect_uri": settings.FRIENDEN_REDIRECT_URI,
             "response_type": "code",
-            "scope": "profile",
+            "scope": "profile phone",
             "state": state,
             "code_challenge": challenge,
             "code_challenge_method": "S256",
@@ -126,9 +131,14 @@ class FriendenProvider:
         subject = profile.get("sub")
         if not isinstance(subject, str) or len(subject) > 255 or not re.fullmatch(r"sermo:[0-9]+:[0-9]+", subject):
             raise ValueError("Invalid Frienden subject")
+        phone = profile.get("phone")
+        if profile.get("phone_verified") is not True or not isinstance(phone, str) or not re.fullmatch(r"\+861[3-9][0-9]{9}", phone):
+            raise FriendenPhoneUnverified
         nickname = profile.get("nickname")
         nickname = nickname.strip() if isinstance(nickname, str) else ""
-        return ProviderProfile(subject, username=nickname[:255], display_name=nickname[:120] or "友间用户")
+        return ProviderProfile(
+            subject, username=nickname[:255], display_name=nickname[:120] or "友间用户", verified_phone=phone,
+        )
 
 
 PROVIDERS = {"github": GitHubProvider(), "qitian": QitianProvider(), "frienden": FriendenProvider()}
